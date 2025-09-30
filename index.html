@@ -84,7 +84,7 @@
         <!-- FLEX CONTAINER: 제목과 버튼을 같은 층에 가로로 배치 -->
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-xl font-semibold text-gray-700">
-            1. 입력 모델 및 문장 설정
+            입력 모델 및 문장 설정
           </h2>
 
           <!-- 토크나이저 ID 수정 버튼 (⚙️ 이모티콘만, 배경/모서리 변경) -->
@@ -134,7 +134,7 @@
         id="annotation-section"
         class="bg-white p-8 rounded-xl shadow-lg mb-8 hidden"
       >
-        <h2 class="text-xl font-semibold mb-6 text-gray-700">2. 토큰 태깅</h2>
+        <h2 class="text-xl font-semibold mb-6 text-gray-700">토큰 태깅</h2>
 
         <!-- 현재 토큰 표시 -->
         <div
@@ -205,7 +205,7 @@
         class="bg-white p-6 rounded-xl shadow-lg mb-8 hidden"
       >
         <h2 class="text-xl font-semibold mb-4 text-gray-700">
-          3. 실시간 태깅 상태 (클릭하여 수정)
+          실시간 태깅 상태 (클릭하여 수정)
         </h2>
         <p class="text-sm text-gray-500 mb-3">
           <span class="font-bold text-gray-700">현재 문장:</span>
@@ -240,7 +240,7 @@
         class="bg-white p-6 rounded-xl shadow-lg mb-8 hidden"
       >
         <h2 class="text-xl font-semibold mb-4 text-gray-700">
-          4. 최종 결과물 (<span id="final-count">0</span>개 문장 처리 완료)
+          최종 결과물 (<span id="final-count">0</span>개 문장 처리 완료)
         </h2>
         <p class="text-gray-600 mb-4">
           현재까지 처리된 모든 입력 문장에 대한 태깅 결과입니다. 아래 JSON을
@@ -252,12 +252,40 @@
         >
 []</pre
         >
-        <button
-          id="copy-json-btn"
-          class="mt-4 bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition duration-150 shadow-md"
+        <div class="flex gap-3 mt-4">
+          <button
+            id="copy-json-btn"
+            class="bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition duration-150 shadow-md"
+          >
+            JSON 복사
+          </button>
+          <button
+            id="save-to-storage-btn"
+            class="bg-green-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-700 transition duration-150 shadow-md"
+          >
+            💾 로컬스토리지에 저장
+          </button>
+        </div>
+      </section>
+
+      <!-- 5. 저장된 작업 목록 섹션 -->
+      <section
+        id="saved-data-section"
+        class="bg-white p-6 rounded-xl shadow-lg mb-8"
+      >
+        <h2 class="text-xl font-semibold mb-4 text-gray-700">
+          저장된 작업 목록
+        </h2>
+        <p class="text-gray-600 mb-4">
+          로컬스토리지에 저장된 작업들입니다. 불러와서 이어서 작업할 수
+          있습니다.
+        </p>
+        <div
+          id="saved-data-list"
+          class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
         >
-          JSON 복사
-        </button>
+          <!-- 저장된 데이터 카드들이 여기에 동적으로 추가됩니다 -->
+        </div>
       </section>
 
       <!-- 커스텀 모달 (경고/확인용) -->
@@ -304,7 +332,11 @@
         currentTokenTags: [], // 현재 문장의 태그 배열
         allResults: [], // 모든 완료된 결과
         isEditingTokenIndex: -1, // 수정 중인 토큰의 인덱스 (-1이면 수정 아님)
+        loadedDataId: null, // 현재 불러온 데이터의 ID (이어서 작업 시 사용)
       };
+
+      // 로컬스토리지 관련 상수
+      const STORAGE_KEY = "tokenAnnotationSaves";
 
       // LLM 토크나이저 상태 변수 (Hugging Face Transformers.js 사용)
       let tokenizer = null;
@@ -340,6 +372,8 @@
         openTokenizerModalBtn: document.getElementById(
           "open-tokenizer-modal-btn"
         ),
+        saveToStorageBtn: document.getElementById("save-to-storage-btn"),
+        savedDataList: document.getElementById("saved-data-list"),
 
         // 모달 관련 요소 (수정됨)
         modal: document.getElementById("custom-modal"),
@@ -352,6 +386,346 @@
       };
 
       // --- 유틸리티 함수 ---
+
+      // --- 로컬스토리지 관련 함수 ---
+
+      /**
+       * 로컬스토리지에서 모든 저장된 데이터 가져오기
+       * @returns {Array} 저장된 데이터 배열
+       */
+      const getAllSavedData = () => {
+        try {
+          const data = localStorage.getItem(STORAGE_KEY);
+          if (!data) return [];
+          const parsed = JSON.parse(data);
+          // 최신순으로 정렬 (timestamp 기준)
+          return parsed.sort(
+            (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+          );
+        } catch (error) {
+          console.error("로컬스토리지 데이터 읽기 오류:", error);
+          return [];
+        }
+      };
+
+      /**
+       * 로컬스토리지에 데이터 저장
+       * @param {string} name - 저장할 데이터 이름
+       * @returns {boolean} 저장 성공 여부
+       */
+      const saveToLocalStorage = (name) => {
+        try {
+          if (!name || name.trim() === "") {
+            showModal("경고", "저장 이름을 입력해주세요.");
+            return false;
+          }
+
+          if (name.length > 50) {
+            showModal("경고", "저장 이름은 50자 이내로 입력해주세요.");
+            return false;
+          }
+
+          if (globalState.allResults.length === 0) {
+            showModal(
+              "경고",
+              "저장할 결과가 없습니다. 먼저 태깅 작업을 완료해주세요."
+            );
+            return false;
+          }
+
+          const allData = getAllSavedData();
+
+          // 같은 이름이 있는지 확인
+          const existingIndex = allData.findIndex((item) => item.name === name);
+
+          const newData = {
+            id: globalState.loadedDataId || Date.now().toString(),
+            name: name.trim(),
+            timestamp: new Date().toISOString(),
+            modelId: loadedModelId || pendingModelId,
+            results: JSON.parse(JSON.stringify(globalState.allResults)),
+          };
+
+          if (existingIndex !== -1) {
+            // 덮어쓰기
+            allData[existingIndex] = newData;
+          } else {
+            // 새로 추가
+            allData.push(newData);
+          }
+
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(allData));
+          globalState.loadedDataId = newData.id; // 저장 후 ID 업데이트
+
+          renderSavedDataList();
+          showModal(
+            "저장 완료",
+            `"${name}" 작업이 로컬스토리지에 저장되었습니다.`
+          );
+          return true;
+        } catch (error) {
+          console.error("로컬스토리지 저장 오류:", error);
+          if (error.name === "QuotaExceededError") {
+            showModal(
+              "저장 실패",
+              "로컬스토리지 용량이 부족합니다. 일부 데이터를 삭제해주세요."
+            );
+          } else {
+            showModal("저장 실패", "데이터 저장 중 오류가 발생했습니다.");
+          }
+          return false;
+        }
+      };
+
+      /**
+       * 로컬스토리지에서 데이터 불러오기
+       * @param {string} id - 불러올 데이터 ID
+       */
+      const loadFromLocalStorage = (id) => {
+        try {
+          const allData = getAllSavedData();
+          const data = allData.find((item) => item.id === id);
+
+          if (!data) {
+            showModal("오류", "해당 데이터를 찾을 수 없습니다.");
+            return;
+          }
+
+          // 데이터 로드
+          globalState.allResults = JSON.parse(JSON.stringify(data.results));
+          globalState.loadedDataId = data.id;
+          pendingModelId = data.modelId;
+
+          // 현재 작업 중인 내용 초기화
+          globalState.inputs = [];
+          globalState.currentInputIndex = 0;
+          globalState.currentTokens = [];
+          globalState.currentTokenTags = [];
+          globalState.currentTokenIndex = 0;
+
+          // 입력창 비우기
+          elements.inputSentences.value = "";
+
+          renderUI();
+          showModal("불러오기 완료", `"${data.name}" 프로젝트를 불러왔습니다.`);
+        } catch (error) {
+          console.error("로컬스토리지 불러오기 오류:", error);
+          showModal(
+            "불러오기 실패",
+            "데이터를 불러오는 중 오류가 발생했습니다."
+          );
+        }
+      };
+
+      /**
+       * 로컬스토리지에서 데이터 삭제
+       * @param {string} id - 삭제할 데이터 ID
+       */
+      const deleteFromLocalStorage = (id) => {
+        try {
+          const allData = getAllSavedData();
+          const filtered = allData.filter((item) => item.id !== id);
+
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+          renderSavedDataList();
+          showModal("삭제 완료", "작업이 삭제되었습니다.");
+        } catch (error) {
+          console.error("로컬스토리지 삭제 오류:", error);
+          showModal("삭제 실패", "데이터 삭제 중 오류가 발생했습니다.");
+        }
+      };
+
+      /**
+       * 저장된 데이터 목록 UI 렌더링
+       */
+      const renderSavedDataList = () => {
+        const allData = getAllSavedData();
+
+        if (allData.length === 0) {
+          elements.savedDataList.innerHTML = `
+            <div class="col-span-full text-center py-8">
+              <p class="text-gray-400 text-lg">저장된 작업이 없습니다.</p>
+              <p class="text-gray-500 text-sm mt-2">태깅 작업을 완료한 후 "로컬스토리지에 저장" 버튼을 클릭하세요.</p>
+            </div>
+          `;
+          return;
+        }
+
+        elements.savedDataList.innerHTML = allData
+          .map((data) => {
+            const date = new Date(data.timestamp);
+            const formattedDate = date.toLocaleString("ko-KR", {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+
+            return `
+            <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-gray-50">
+              <h3 class="font-bold text-lg text-gray-800 mb-2 truncate" title="${
+                data.name
+              }">
+                ${data.name}
+              </h3>
+              <div class="text-sm text-gray-600 space-y-1 mb-3">
+                <p>📅 ${formattedDate}</p>
+                <p>📝 ${data.results.length}개 문장</p>
+                <p class="truncate" title="${data.modelId}">🤖 ${
+              data.modelId
+            }</p>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  onclick="handleLoadData('${data.id}')"
+                  class="flex-1 bg-blue-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition"
+                >
+                  불러오기
+                </button>
+                <button
+                  onclick="handleDeleteData('${data.id}', '${data.name.replace(
+              /'/g,
+              "\\'"
+            )}')"
+                  class="bg-red-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-600 transition"
+                >
+                  삭제
+                </button>
+              </div>
+            </div>
+          `;
+          })
+          .join("");
+      };
+
+      /**
+       * 저장 이름 입력 모달 표시
+       */
+      const showSaveModal = () => {
+        elements.modalTitle.textContent = "작업 저장";
+
+        // 기본 이름 생성 - 불러온 데이터가 있으면 그 이름 사용
+        let defaultName;
+        if (globalState.loadedDataId) {
+          const allData = getAllSavedData();
+          const loadedData = allData.find(
+            (item) => item.id === globalState.loadedDataId
+          );
+          defaultName = loadedData ? loadedData.name : `새 프로젝트`;
+        } else {
+          defaultName = `새 프로젝트`;
+        }
+
+        elements.modalContentContainer.innerHTML = `
+          <p class="text-gray-700 mb-3 text-sm">
+            저장할 작업의 이름을 입력하세요.
+          </p>
+          <input 
+            type="text" 
+            id="modal-save-name-input" 
+            value="${defaultName}" 
+            class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 transition" 
+            placeholder="작업 이름"
+            maxlength="50">
+          <p class="text-sm text-gray-500 mt-2">같은 이름이 있으면 덮어씁니다.</p>
+        `;
+
+        elements.modalActionBtn.classList.remove("hidden");
+        elements.modalActionBtn.textContent = "저장";
+        elements.modalActionBtn.className =
+          "bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition";
+        elements.modalCloseBtn.textContent = "취소";
+
+        elements.modalActionBtn.onclick = () => {
+          const inputElement = document.getElementById("modal-save-name-input");
+          const name = inputElement.value.trim();
+
+          if (saveToLocalStorage(name)) {
+            elements.modal.classList.add("hidden");
+            elements.modal.classList.remove("flex");
+          }
+        };
+
+        elements.modalCloseBtn.onclick = () => {
+          elements.modal.classList.add("hidden");
+          elements.modal.classList.remove("flex");
+        };
+
+        elements.modal.classList.remove("hidden");
+        elements.modal.classList.add("flex");
+
+        setTimeout(() => {
+          const input = document.getElementById("modal-save-name-input");
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        }, 100);
+      };
+
+      // 전역 함수로 노출 (HTML onclick에서 사용)
+      window.handleLoadData = (id) => {
+        // 현재 작업 중인 내용이 있는지 확인
+        if (
+          globalState.currentTokens.length > 0 ||
+          globalState.inputs.length > 0
+        ) {
+          elements.modalTitle.textContent = "불러오기 확인";
+          elements.modalContentContainer.innerHTML = `
+            <p class="text-gray-700 mb-4">현재 작업 중인 내용이 있습니다.<br>불러오면 현재 내용이 사라집니다.<br><br>계속하시겠습니까?</p>
+          `;
+          elements.modalActionBtn.classList.remove("hidden");
+          elements.modalActionBtn.textContent = "불러오기";
+          elements.modalActionBtn.className =
+            "bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition";
+          elements.modalCloseBtn.textContent = "취소";
+
+          elements.modalActionBtn.onclick = () => {
+            loadFromLocalStorage(id);
+            elements.modal.classList.add("hidden");
+            elements.modal.classList.remove("flex");
+          };
+
+          elements.modalCloseBtn.onclick = () => {
+            elements.modal.classList.add("hidden");
+            elements.modal.classList.remove("flex");
+          };
+
+          elements.modal.classList.remove("hidden");
+          elements.modal.classList.add("flex");
+        } else {
+          loadFromLocalStorage(id);
+        }
+      };
+
+      window.handleDeleteData = (id, name) => {
+        elements.modalTitle.textContent = "삭제 확인";
+        elements.modalContentContainer.innerHTML = `
+          <p class="text-gray-700 mb-4">"${name}" 작업을 삭제하시겠습니까?<br><br>이 작업은 되돌릴 수 없습니다.</p>
+        `;
+        elements.modalActionBtn.classList.remove("hidden");
+        elements.modalActionBtn.textContent = "삭제";
+        elements.modalActionBtn.className =
+          "bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition";
+        elements.modalCloseBtn.textContent = "취소";
+
+        elements.modalActionBtn.onclick = () => {
+          deleteFromLocalStorage(id);
+          elements.modal.classList.add("hidden");
+          elements.modal.classList.remove("flex");
+        };
+
+        elements.modalCloseBtn.onclick = () => {
+          elements.modal.classList.add("hidden");
+          elements.modal.classList.remove("flex");
+        };
+
+        elements.modal.classList.remove("hidden");
+        elements.modal.classList.add("flex");
+      };
+
+      // --- 기존 유틸리티 함수 ---
 
       /**
        * 커스텀 알림 모달 표시 (간단한 알림용)
@@ -677,16 +1051,28 @@
       // 전체 UI 렌더링 (상태 변경 시 호출)
       const renderUI = () => {
         const totalInputs = globalState.inputs.length;
-        const completedInputs = globalState.allResults.length;
-        const isFinished = completedInputs >= totalInputs && totalInputs > 0;
+        const currentInputIndex = globalState.currentInputIndex;
         const hasResults = globalState.allResults.length > 0;
+
+        // 현재 입력 문장들을 모두 처리했는지 확인
+        const isCurrentBatchFinished =
+          currentInputIndex >= totalInputs && totalInputs > 0;
+
+        console.log(
+          "[renderUI] totalInputs:",
+          totalInputs,
+          "currentInputIndex:",
+          currentInputIndex,
+          "isCurrentBatchFinished:",
+          isCurrentBatchFinished
+        );
 
         // 1. 설정 및 진행 상황 업데이트
         elements.inputSentences.value = globalState.inputs.join("\n");
         elements.finalCount.textContent = globalState.allResults.length;
 
         const modelDisplay = loadedModelId || pendingModelId;
-        const progressCountText = `${completedInputs} / ${totalInputs} 문장`; // 문장 카운트 포맷
+        const progressCountText = `${currentInputIndex} / ${totalInputs} 문장`; // 현재 처리 중인 인덱스 기준
 
         // 1-1. 진행 상태 라인 업데이트
         let statusText = "";
@@ -699,15 +1085,15 @@
         }
         elements.progressStatusLine.innerHTML = statusText;
 
-        // 1-2. 문장 카운트 라인 업데이트 (요청하신 "현재 진행: " 포맷으로 변경)
+        // 1-2. 문장 카운트 라인 업데이트
         elements.progressCountLine.textContent = `현재 진행: ${progressCountText}`;
 
         // 2. 섹션 표시/숨김 관리
-
-        if (isFinished || totalInputs === 0) {
+        // 현재 배치의 작업이 완료되었거나 입력이 없으면 태깅 섹션 숨김
+        if (isCurrentBatchFinished || totalInputs === 0) {
           elements.annotationSection.classList.add("hidden");
           elements.statusSection.classList.add("hidden");
-          elements.currentJsonOutput.textContent = isFinished
+          elements.currentJsonOutput.textContent = isCurrentBatchFinished
             ? "작업 완료."
             : "{}";
         } else {
@@ -734,6 +1120,9 @@
         } else {
           elements.finalResultsSection.classList.add("hidden");
         }
+
+        // 저장된 데이터 목록도 렌더링
+        renderSavedDataList();
       };
 
       // --- 이벤트 핸들러 ---
@@ -748,6 +1137,10 @@
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
         const newModelId = pendingModelId; // 설정된 ID 사용
+
+        console.log("[작업 시작] 입력 문장 수:", rawInputs.length);
+        console.log("[작업 시작] 불러온 데이터 ID:", globalState.loadedDataId);
+        console.log("[작업 시작] 기존 결과 수:", globalState.allResults.length);
 
         if (!newModelId) {
           showModal("경고", "토크나이저 ID를 설정해주세요.");
@@ -768,10 +1161,21 @@
           return;
         }
 
-        // 새 작업 시작 시 상태 초기화 및 설정
+        // 새 작업 시작 시 상태 설정
         globalState.inputs = rawInputs;
         globalState.currentInputIndex = 0;
-        globalState.allResults = [];
+        // 주의: allResults는 초기화하지 않음 (불러온 데이터가 있으면 유지)
+        // 새로 시작하는 경우에만 초기화
+        if (!globalState.loadedDataId) {
+          globalState.allResults = [];
+          console.log("[작업 시작] 새 작업 - allResults 초기화");
+        } else {
+          console.log(
+            "[작업 시작] 이어서 작업 - allResults 유지 (" +
+              globalState.allResults.length +
+              "개)"
+          );
+        }
 
         // 첫 문장으로 이동
         await moveToNextInput(true);
@@ -822,6 +1226,18 @@
             "클립보드 복사에 실패했습니다. 콘솔을 확인해주세요."
           );
         }
+      };
+
+      // 저장 버튼 이벤트 핸들러
+      elements.saveToStorageBtn.onclick = () => {
+        if (globalState.allResults.length === 0) {
+          showModal(
+            "경고",
+            "저장할 결과가 없습니다. 먼저 태깅 작업을 완료해주세요."
+          );
+          return;
+        }
+        showSaveModal();
       };
 
       // 다음 문장으로 이동 및 토큰/태그 초기화 (async로 변경)
@@ -890,6 +1306,15 @@
           // 토크나이저 설정 모달의 입력창이 포커스된 상태에서 Enter를 누르면 '적용' 버튼 클릭
           if (
             document.getElementById("modal-tokenizer-input") ===
+            document.activeElement
+          ) {
+            e.preventDefault();
+            elements.modalActionBtn.click();
+            return;
+          }
+          // 저장 모달의 입력창이 포커스된 상태에서 Enter를 누르면 '저장' 버튼 클릭
+          else if (
+            document.getElementById("modal-save-name-input") ===
             document.activeElement
           ) {
             e.preventDefault();
@@ -991,6 +1416,7 @@
       // 애플리케이션 시작 시 토크나이저 로딩 시작 (pendingModelId의 기본값을 사용)
       window.onload = () => {
         initializeTokenizer(pendingModelId);
+        renderSavedDataList(); // 저장된 데이터 목록 렌더링
       };
     </script>
   </body>
