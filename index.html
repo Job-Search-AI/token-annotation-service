@@ -397,9 +397,41 @@
         try {
           const data = localStorage.getItem(STORAGE_KEY);
           if (!data) return [];
-          const parsed = JSON.parse(data);
+
+          let parsed;
+          try {
+            parsed = JSON.parse(data);
+          } catch (parseError) {
+            console.error("데이터 파싱 오류:", parseError);
+            localStorage.removeItem(STORAGE_KEY); // 손상된 데이터 제거
+            return [];
+          }
+
+          // 데이터 유효성 검증
+          const validData = parsed.filter((item) => {
+            return (
+              item &&
+              typeof item === "object" &&
+              typeof item.id === "string" &&
+              typeof item.name === "string" &&
+              typeof item.timestamp === "string" &&
+              typeof item.modelId === "string" &&
+              Array.isArray(item.results)
+            );
+          });
+
+          // 손상된 데이터가 있었다면 유효한 데이터만 저장
+          if (validData.length !== parsed.length) {
+            console.warn(
+              `${
+                parsed.length - validData.length
+              }개의 손상된 데이터가 제거되었습니다.`
+            );
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(validData));
+          }
+
           // 최신순으로 정렬 (timestamp 기준)
-          return parsed.sort(
+          return validData.sort(
             (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
           );
         } catch (error) {
@@ -434,33 +466,43 @@
           }
 
           const allData = getAllSavedData();
+          const trimmedName = name.trim();
 
-          // 같은 이름이 있는지 확인
-          const existingIndex = allData.findIndex((item) => item.name === name);
+          // 같은 이름의 데이터 찾기
+          const existingData = allData.find(
+            (item) => item.name === trimmedName
+          );
 
+          // 새 데이터 객체 생성
           const newData = {
-            id: globalState.loadedDataId || Date.now().toString(),
-            name: name.trim(),
+            // 같은 이름의 데이터가 있으면 해당 ID 사용, 없으면 새 ID 생성
+            id: existingData ? existingData.id : Date.now().toString(),
+            name: trimmedName,
             timestamp: new Date().toISOString(),
             modelId: loadedModelId || pendingModelId,
             results: JSON.parse(JSON.stringify(globalState.allResults)),
           };
 
-          if (existingIndex !== -1) {
-            // 덮어쓰기
-            allData[existingIndex] = newData;
-          } else {
-            // 새로 추가
-            allData.push(newData);
-          }
+          // 기존 데이터에서 같은 이름을 가진 항목 제외
+          const filteredData = allData.filter(
+            (item) => item.name !== trimmedName
+          );
 
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(allData));
-          globalState.loadedDataId = newData.id; // 저장 후 ID 업데이트
+          // 새 데이터 추가
+          filteredData.push(newData);
+
+          // 저장
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(filteredData));
+
+          // 현재 작업 중인 데이터 ID 업데이트
+          globalState.loadedDataId = newData.id;
 
           renderSavedDataList();
           showModal(
             "저장 완료",
-            `"${name}" 작업이 로컬스토리지에 저장되었습니다.`
+            `"${trimmedName}" 작업이 로컬스토리지에 ${
+              existingData ? "덮어쓰기로 " : "새로 "
+            }저장되었습니다.`
           );
           return true;
         } catch (error) {
@@ -526,8 +568,21 @@
           const allData = getAllSavedData();
           const filtered = allData.filter((item) => item.id !== id);
 
+          // 현재 작업 중인 데이터가 삭제되는 경우 상태 초기화
+          if (id === globalState.loadedDataId) {
+            globalState.loadedDataId = null;
+            globalState.allResults = [];
+            globalState.inputs = [];
+            globalState.currentInputIndex = 0;
+            globalState.currentTokens = [];
+            globalState.currentTokenTags = [];
+            globalState.currentTokenIndex = 0;
+            globalState.isEditingTokenIndex = -1;
+          }
+
           localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
           renderSavedDataList();
+          renderUI(); // 전체 UI 업데이트
           showModal("삭제 완료", "작업이 삭제되었습니다.");
         } catch (error) {
           console.error("로컬스토리지 삭제 오류:", error);
@@ -637,6 +692,7 @@
           "bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition";
         elements.modalCloseBtn.textContent = "취소";
 
+        elements.modalActionBtn.onclick = null; // 이전 이벤트 핸들러 제거
         elements.modalActionBtn.onclick = () => {
           const inputElement = document.getElementById("modal-save-name-input");
           const name = inputElement.value.trim();
@@ -700,9 +756,20 @@
       };
 
       window.handleDeleteData = (id, name) => {
+        // 현재 작업 중인 데이터인지 확인
+        const isCurrentData = id === globalState.loadedDataId;
+
         elements.modalTitle.textContent = "삭제 확인";
         elements.modalContentContainer.innerHTML = `
-          <p class="text-gray-700 mb-4">"${name}" 작업을 삭제하시겠습니까?<br><br>이 작업은 되돌릴 수 없습니다.</p>
+          <p class="text-gray-700 mb-4">
+            "${name}" 작업을 삭제하시겠습니까?
+            ${
+              isCurrentData
+                ? '<br><br><span class="text-red-600 font-bold">⚠️ 주의: 현재 작업 중인 데이터입니다.</span>'
+                : ""
+            }
+            <br><br>이 작업은 되돌릴 수 없습니다.
+          </p>
         `;
         elements.modalActionBtn.classList.remove("hidden");
         elements.modalActionBtn.textContent = "삭제";
@@ -710,10 +777,34 @@
           "bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition";
         elements.modalCloseBtn.textContent = "취소";
 
+        elements.modalActionBtn.onclick = null; // 이전 이벤트 핸들러 제거
         elements.modalActionBtn.onclick = () => {
-          deleteFromLocalStorage(id);
-          elements.modal.classList.add("hidden");
-          elements.modal.classList.remove("flex");
+          try {
+            deleteFromLocalStorage(id);
+
+            // 삭제 후 입력창과 결과창 초기화
+            if (isCurrentData) {
+              elements.inputSentences.value = "";
+              elements.finalJsonOutput.textContent = "[]";
+              elements.currentJsonOutput.textContent = "{}";
+
+              // 섹션 상태 업데이트
+              elements.annotationSection.classList.add("hidden");
+              elements.statusSection.classList.add("hidden");
+              if (elements.finalResultsSection) {
+                elements.finalResultsSection.classList.add("hidden");
+              }
+            }
+
+            elements.modal.classList.add("hidden");
+            elements.modal.classList.remove("flex");
+          } catch (error) {
+            console.error("데이터 삭제 중 오류 발생:", error);
+            showModal(
+              "오류",
+              "데이터 삭제 중 문제가 발생했습니다. 페이지를 새로고침하고 다시 시도해주세요."
+            );
+          }
         };
 
         elements.modalCloseBtn.onclick = () => {
@@ -723,6 +814,29 @@
 
         elements.modal.classList.remove("hidden");
         elements.modal.classList.add("flex");
+      };
+
+      // --- 전역 에러 핸들링 ---
+      window.onerror = function (msg, url, lineNo, columnNo, error) {
+        console.error("에러 발생:", { msg, url, lineNo, columnNo, error });
+        // 사용자에게 알림
+        showModal(
+          "오류 발생",
+          "예기치 않은 오류가 발생했습니다. 페이지를 새로고침하고 다시 시도해주세요."
+        );
+        return false;
+      };
+
+      // LocalStorage 접근 가능 여부 확인
+      const checkLocalStorageAccess = () => {
+        try {
+          localStorage.setItem("test", "test");
+          localStorage.removeItem("test");
+          return true;
+        } catch (e) {
+          console.error("LocalStorage 접근 불가:", e);
+          return false;
+        }
       };
 
       // --- 기존 유틸리티 함수 ---
@@ -1413,10 +1527,36 @@
       });
       // --- 키보드 이벤트 핸들러 끝 ---
 
-      // 애플리케이션 시작 시 토크나이저 로딩 시작 (pendingModelId의 기본값을 사용)
+      // 애플리케이션 시작 시 초기화
       window.onload = () => {
-        initializeTokenizer(pendingModelId);
-        renderSavedDataList(); // 저장된 데이터 목록 렌더링
+        // LocalStorage 접근 가능 여부 확인
+        if (!checkLocalStorageAccess()) {
+          showModal(
+            "오류",
+            "LocalStorage에 접근할 수 없습니다. 브라우저 설정을 확인하거나, 시크릿 모드를 사용 중이라면 일반 모드로 전환해주세요."
+          );
+          return;
+        }
+
+        try {
+          // 저장된 데이터 복구 시도
+          const allData = getAllSavedData();
+
+          // 토크나이저 초기화
+          initializeTokenizer(pendingModelId);
+
+          // UI 초기화
+          renderSavedDataList();
+          renderUI();
+
+          console.log("애플리케이션 초기화 완료");
+        } catch (error) {
+          console.error("초기화 중 오류 발생:", error);
+          showModal(
+            "오류",
+            "애플리케이션 초기화 중 오류가 발생했습니다. 페이지를 새로고침하고 다시 시도해주세요."
+          );
+        }
       };
     </script>
   </body>
