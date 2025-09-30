@@ -1,5 +1,11 @@
 # 토큰 태깅 서비스 (NER 태깅)
 
+## 실행 방법
+
+https://token-annotation-service.netlify.app/
+
+<br>
+
 ## 개요
 
 이 서비스는 자연어 처리(NLP)를 위한 Named Entity Recognition(NER) 태깅 도구입니다.
@@ -84,10 +90,6 @@ Hugging Face의 Transformers.js를 사용하여 브라우저에서 직접 토큰
 - **프론트엔드**: HTML, CSS (Tailwind CSS), JavaScript (ES6+)
 - **토크나이저**: Hugging Face Transformers.js
 - **저장소**: 브라우저 로컬스토리지
-
-## 실행 방법
-
-https://token-annotation-service.netlify.app/
 
 <br>
 
