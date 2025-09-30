@@ -87,13 +87,9 @@ Hugging Face의 Transformers.js를 사용하여 브라우저에서 직접 토큰
 
 ## 실행 방법
 
-```bash
-# 간단한 HTTP 서버 실행
-python3 -m http.server 8000
+https://token-annotation-service.netlify.app/
 
-# 브라우저에서 접속
-# http://localhost:8000
-```
+<br>
 
 ## 데이터 형식
 
