@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>토큰 할당 서비스 (NER)</title>
+    <!-- Tailwind CSS 로드 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       /* Inter 폰트 설정 */
@@ -80,9 +81,23 @@
         id="setup-section"
         class="bg-white p-6 rounded-xl shadow-lg mb-8"
       >
-        <h2 class="text-xl font-semibold mb-4 text-gray-700">
-          1. 입력 문장 설정 및 상태
-        </h2>
+        <!-- FLEX CONTAINER: 제목과 버튼을 같은 층에 가로로 배치 -->
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-semibold text-gray-700">
+            1. 입력 모델 및 문장 설정
+          </h2>
+
+          <!-- 토크나이저 ID 수정 버튼 (⚙️ 이모티콘만, 배경/모서리 변경) -->
+          <button
+            id="open-tokenizer-modal-btn"
+            title="토크나이저 ID 수정"
+            class="bg-gray-200 text-gray-800 w-10 h-10 rounded-lg text-lg font-medium hover:bg-gray-300 transition shadow-sm border border-gray-300 flex items-center justify-center"
+          >
+            ⚙️
+          </button>
+        </div>
+        <!-- FLEX CONTAINER 끝 -->
+
         <div class="flex flex-col md:flex-row gap-4 mb-4">
           <textarea
             id="input-sentences"
@@ -97,10 +112,21 @@
             작업 시작 / 재시작
           </button>
         </div>
-        <p id="progress-info" class="text-sm text-gray-600 mt-2">
-          현재 진행: <span id="current-input-index">0</span> /
-          <span id="total-inputs">0</span> 문장
-        </p>
+
+        <!-- 토크나이저 로딩 상태 및 진행 상황 표시 (레이아웃 분리) -->
+        <div id="progress-container" class="mt-2">
+          <!-- 1. 로딩 상태/모델 ID -->
+          <p id="progress-status-line" class="text-sm text-gray-600">
+            토크나이저 로딩 전... (klue/bert-base)
+          </p>
+          <!-- 2. 문장 카운트 (새 줄) -->
+          <p
+            id="progress-count-line"
+            class="text-sm text-gray-500 mt-0.5 font-medium"
+          >
+            현재 진행: 0 / 0 문장
+          </p>
+        </div>
       </section>
 
       <!-- 2. 토큰 할당 영역 (작업 중일 때만 표시) -->
@@ -243,11 +269,20 @@
           <h3 id="modal-title" class="text-xl font-bold mb-3 text-gray-800">
             알림
           </h3>
-          <p id="modal-message" class="text-gray-700 mb-4">내용</p>
+          <div id="modal-content-container">
+            <!-- Dynamic content: message or input goes here -->
+            <p class="text-gray-700 mb-4">내용</p>
+          </div>
           <div class="flex justify-end space-x-3">
             <button
               id="modal-close-btn"
               class="bg-gray-300 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
+            >
+              닫기
+            </button>
+            <button
+              id="modal-action-btn"
+              class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition hidden"
             >
               확인
             </button>
@@ -256,8 +291,11 @@
       </div>
     </div>
 
-    <script type="text/javascript">
-      // 앱 상태 변수 (파이어베이스 대신 로컬 메모리 사용)
+    <script type="module">
+      // Hugging Face Transformers.js 라이브러리에서 AutoTokenizer를 직접 가져옵니다.
+      import { AutoTokenizer } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.4";
+
+      // 앱 상태 변수
       let globalState = {
         inputs: [], // 모든 입력 문장
         currentInputIndex: 0, // 현재 처리 중인 문장 인덱스
@@ -268,11 +306,21 @@
         isEditingTokenIndex: -1, // 수정 중인 토큰의 인덱스 (-1이면 수정 아님)
       };
 
+      // LLM 토크나이저 상태 변수 (Hugging Face Transformers.js 사용)
+      let tokenizer = null;
+      let isTokenizerReady = false;
+      let loadedModelId = null; // 현재 로드된 모델 ID
+      let pendingModelId = "klue/bert-base"; // 사용자가 설정한 (아직 로드되지 않은) ID
+
       // UI 요소 캐싱
       const elements = {
         inputSentences: document.getElementById("input-sentences"),
         startBtn: document.getElementById("start-btn"),
-        progressInfo: document.getElementById("progress-info"),
+
+        // 변경된 요소 ID 반영
+        progressStatusLine: document.getElementById("progress-status-line"),
+        progressCountLine: document.getElementById("progress-count-line"),
+
         annotationSection: document.getElementById("annotation-section"),
         statusSection: document.getElementById("status-section"),
         finalResultsSection: document.getElementById("final-results-section"),
@@ -282,30 +330,119 @@
         finalJsonOutput: document.getElementById("final-json-output"),
         nextInputBtn: document.getElementById("next-input-btn"),
         tagButtons: document.querySelectorAll(".tag-btn"),
-        modal: document.getElementById("custom-modal"),
-        modalTitle: document.getElementById("modal-title"),
-        modalMessage: document.getElementById("modal-message"),
-        modalCloseBtn: document.getElementById("modal-close-btn"),
         currentSentenceDisplay: document.getElementById(
           "current-sentence-display"
         ),
         copyJsonBtn: document.getElementById("copy-json-btn"),
-        finalCount: document.getElementById("final-count"), // 추가된 요소
+        finalCount: document.getElementById("final-count"),
+
+        // 새 요소
+        openTokenizerModalBtn: document.getElementById(
+          "open-tokenizer-modal-btn"
+        ),
+
+        // 모달 관련 요소 (수정됨)
+        modal: document.getElementById("custom-modal"),
+        modalTitle: document.getElementById("modal-title"),
+        modalContentContainer: document.getElementById(
+          "modal-content-container"
+        ),
+        modalCloseBtn: document.getElementById("modal-close-btn"),
+        modalActionBtn: document.getElementById("modal-action-btn"),
       };
 
       // --- 유틸리티 함수 ---
 
-      // 커스텀 모달 표시
+      /**
+       * 커스텀 알림 모달 표시 (간단한 알림용)
+       * @param {string} title - 모달 제목
+       * @param {string} message - 모달 메시지 (HTML 가능)
+       */
       const showModal = (title, message) => {
+        // 내부 컨텐츠 초기화 및 메시지 삽입
+        elements.modalContentContainer.innerHTML = `<p id="modal-message" class="text-gray-700 mb-4">${message}</p>`;
+
         elements.modalTitle.textContent = title;
-        elements.modalMessage.textContent = message;
+        elements.modalActionBtn.classList.add("hidden"); // 액션 버튼 숨김
+        elements.modalCloseBtn.textContent = "확인"; // 닫기 버튼 텍스트 변경
+
         elements.modal.classList.remove("hidden");
         elements.modal.classList.add("flex");
+
+        // 모달을 닫는 기본 핸들러 설정
+        elements.modalCloseBtn.onclick = () => {
+          elements.modal.classList.add("hidden");
+          elements.modal.classList.remove("flex");
+        };
+        elements.modalActionBtn.onclick = null; // 액션 초기화
       };
 
-      elements.modalCloseBtn.onclick = () => {
-        elements.modal.classList.add("hidden");
-        elements.modal.classList.remove("flex");
+      /**
+       * 토크나이저 설정 모달 표시 및 입력 처리
+       */
+      const openTokenizerConfigModal = () => {
+        elements.modalTitle.textContent = "Hugging Face 토크나이저 ID 설정";
+
+        // Input 필드와 메시지를 포함하는 동적 콘텐츠 생성
+        elements.modalContentContainer.innerHTML = `
+                <p class="text-gray-700 mb-3 text-sm">
+                    토큰화에 사용할 Hugging Face 모델 ID를 입력하세요. (예: <span class="font-mono text-indigo-600">klue/bert-base</span>)
+                </p>
+                <input type="text" id="modal-tokenizer-input" value="${pendingModelId}" 
+                       class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 transition" 
+                       placeholder="모델 ID">
+                <p class="text-sm text-gray-500 mt-2">현재 로드된 모델: ${
+                  loadedModelId || "없음"
+                }</p>
+            `;
+
+        // 액션 버튼 표시 및 텍스트/핸들러 설정
+        elements.modalActionBtn.classList.remove("hidden");
+        elements.modalActionBtn.textContent = "적용";
+        elements.modalCloseBtn.textContent = "취소";
+
+        // 적용 버튼 클릭 핸들러
+        elements.modalActionBtn.onclick = () => {
+          const inputElement = document.getElementById("modal-tokenizer-input");
+          const newModelId = inputElement.value.trim();
+
+          if (newModelId) {
+            const oldModelId = pendingModelId;
+            pendingModelId = newModelId; // 설정 완료
+            elements.modal.classList.add("hidden");
+            elements.modal.classList.remove("flex");
+
+            // 만약 ID가 변경되었거나 로드된 적이 없다면, 사용자에게 '작업 시작'을 누르라고 알림
+            if (newModelId !== loadedModelId && newModelId !== oldModelId) {
+              showModal(
+                "알림",
+                `토크나이저 ID가 <span class="font-bold text-indigo-600">${newModelId}</span>으로 설정되었습니다. <br>변경 사항을 적용하려면 **'작업 시작 / 재시작'** 버튼을 눌러주세요.`
+              );
+            } else {
+              showModal(
+                "알림",
+                `토크나이저 ID가 <span class="font-bold text-indigo-600">${newModelId}</span>으로 설정되었습니다.`
+              );
+            }
+            renderUI(); // UI 업데이트를 통해 pendingModelId를 반영
+          } else {
+            // 입력이 비어있으면 경고
+            showModal("경고", "토크나이저 ID를 입력해주세요.");
+          }
+        };
+
+        // 취소 버튼 클릭 핸들러 (모달 닫기)
+        elements.modalCloseBtn.onclick = () => {
+          elements.modal.classList.add("hidden");
+          elements.modal.classList.remove("flex");
+        };
+
+        elements.modal.classList.remove("hidden");
+        elements.modal.classList.add("flex");
+        // 모달 열릴 때 input에 포커스
+        setTimeout(() => {
+          document.getElementById("modal-tokenizer-input")?.focus();
+        }, 100);
       };
 
       // 태그에 따른 배경 색상 클래스 반환
@@ -315,36 +452,80 @@
         return `bg-${tag} text-white`;
       };
 
-      // 토큰을 공백 기준으로 분리
+      /**
+       * 토큰을 LLM 토크나이저 기준으로 분리
+       * @param {string} sentence - 토큰화할 문장
+       * @returns {string[]} 토큰 리스트
+       */
       const tokenize = (sentence) => {
-        return sentence
-          .trim()
-          .split(/\s+/)
-          .filter((t) => t.length > 0);
+        if (!tokenizer) {
+          console.error("토크나이저가 아직 준비되지 않았습니다.");
+          return [];
+        }
+
+        // AutoTokenizer의 tokenize 메서드를 사용하여 토큰화 수행
+        const tokens = tokenizer.tokenize(sentence);
+
+        // WordPiece 기반 토크나이저의 ## 접두사 제거
+        const filteredTokens = tokens
+          .map((token) => token.replace(/^##/, ""))
+          .filter((t) => t.length > 0); // 빈 문자열 토큰 제거
+
+        return filteredTokens;
+      };
+
+      // --- 토크나이저 로딩 로직 ---
+      /**
+       * 지정된 모델 ID로 토크나이저를 초기화하고 로드합니다.
+       * @param {string} modelId - Hugging Face 모델 ID (예: 'klue/bert-base')
+       */
+      const initializeTokenizer = async (modelId) => {
+        if (!modelId) {
+          showModal("경고", "토크나이저 ID를 입력해야 합니다.");
+          isTokenizerReady = false;
+          loadedModelId = null;
+          elements.progressStatusLine.innerHTML = `<span class="text-red-500 font-bold">모델 ID가 필요합니다.</span> (${pendingModelId})`;
+          return;
+        }
+
+        isTokenizerReady = false;
+        loadedModelId = null;
+        elements.progressStatusLine.innerHTML = `토크나이저 로딩 중... (${modelId}) <span class="text-indigo-500 font-bold">최초 로딩 시 수십 초가 소요될 수 있습니다.</span>`;
+
+        try {
+          tokenizer = await AutoTokenizer.from_pretrained(modelId);
+
+          isTokenizerReady = true;
+          loadedModelId = modelId;
+
+          // 로딩 완료 시 메시지 업데이트는 renderUI에서 처리
+          renderUI();
+        } catch (error) {
+          console.error("토크나이저 로딩 중 오류 발생:", error);
+          elements.progressStatusLine.innerHTML = `<span class="text-red-500 font-bold">토크나이저 로딩 실패.</span> ID: ${modelId}`;
+          showModal(
+            "오류",
+            `토크나이저 모델 (${modelId}) 로딩에 실패했습니다. ID를 확인하고 콘솔을 참조하세요.`
+          );
+        }
       };
 
       // --- UI 및 상태 관리 로직 ---
 
       /**
        * 최종 JSON 결과를 원하는 형식(label 배열을 한 줄로)으로 포맷합니다.
-       * @param {boolean} prettyPrint - 전체 JSON에 들여쓰기를 적용할지 여부
-       * @returns {string} 포맷된 JSON 문자열
        */
       const formatFinalJson = (prettyPrint) => {
-        // 깊은 복사본을 만들어 수정합니다.
         const displayResults = JSON.parse(
           JSON.stringify(globalState.allResults)
         );
 
-        // 'label' 배열을 임시로 한 줄 문자열로 만듭니다.
         displayResults.forEach((result) => {
           if (result.label && Array.isArray(result.label)) {
-            // label 배열만 공백 없이 JSON 문자열로 변환 (한 줄로 만듦)
             result.label = JSON.stringify(result.label);
           }
         });
 
-        // 전체 JSON을 들여쓰기하여 문자열로 변환합니다.
         let jsonString = JSON.stringify(
           displayResults,
           null,
@@ -352,14 +533,10 @@
         );
 
         // 문자열로 변환된 label 배열을 다시 JSON 배열 형태로 복원합니다.
-        // 정규식 패턴: ("label": )"(\[.*?\])"
         jsonString = jsonString.replace(
           /("label": )"(\[.*?\])"/gs,
           (match, p1, p2) => {
-            // 이중 인용부호와 이스케이프된 인용부호를 제거하여 순수 배열 문자열로 만듭니다.
             const unescapedLabels = p2.replace(/\\"/g, '"');
-
-            // "label": ["B-JOB", "I-JOB", "O"] 형태가 되도록 반환합니다.
             return `${p1}${unescapedLabels}`;
           }
         );
@@ -369,32 +546,26 @@
 
       /**
        * 토큰에 태그를 할당하고 B-I-O 규칙을 적용합니다.
-       * @param {string} entityType - 할당할 엔티티 유형 ('JOB', 'CAR', 'EDU', 'LOC', 'O')
        */
       const tagToken = (entityType) => {
-        // 현재 토큰 인덱스 또는 수정 중인 토큰 인덱스를 사용
         const index =
           globalState.isEditingTokenIndex !== -1
             ? globalState.isEditingTokenIndex
             : globalState.currentTokenIndex;
 
         if (index >= globalState.currentTokens.length) {
-          // 토큰을 모두 처리했으므로 다음 문장 버튼을 보여줌
-          // CLS 방지를 위해 클래스 토글 로직은 updateAnnotationUI에서 처리합니다.
           return;
         }
 
         let newTag = "";
 
         if (entityType === "O") {
-          newTag = "O"; // 'O' 태그 할당
+          newTag = "O";
         } else {
-          // B/I 결정 로직
           let prevTag =
             index > 0 ? globalState.currentTokenTags[index - 1] : null;
           const prevEntityType = prevTag ? prevTag.replace(/^[BI]-/, "") : null;
 
-          // 이전 태그가 현재 엔티티 타입과 같으면 I-, 아니면 B-를 붙입니다.
           if (prevEntityType === entityType) {
             newTag = `I-${entityType}`;
           } else {
@@ -402,22 +573,20 @@
           }
         }
 
-        // 태그 할당
         globalState.currentTokenTags[index] = newTag;
 
-        // 수정 모드였으면 수정 모드 종료
         if (globalState.isEditingTokenIndex !== -1) {
           globalState.isEditingTokenIndex = -1;
         } else {
-          // 일반 진행 모드: 다음 토큰으로 이동
           globalState.currentTokenIndex++;
         }
 
-        // 상태 변경 후 UI 즉시 업데이트
         renderUI();
       };
 
-      // 현재 문장의 JSON 결과 생성
+      /**
+       * 현재 문장의 JSON 결과 생성 (model_id 제거됨)
+       */
       const generateCurrentJson = () => {
         const input = globalState.inputs[globalState.currentInputIndex] || "";
         const labels = globalState.currentTokenTags;
@@ -426,6 +595,7 @@
 
         return {
           input: input,
+          // model_id는 사용자 요청에 따라 제거됨
           label: labels,
         };
       };
@@ -438,30 +608,24 @@
             ? globalState.isEditingTokenIndex
             : globalState.currentTokenIndex;
 
-        // 현재 토큰 표시
         if (index < totalTokens) {
           elements.currentToken.textContent = globalState.currentTokens[index];
           elements.currentToken
             .closest(".current-token-wrapper")
             .querySelector("p").textContent = `(${index + 1}번째 토큰)`;
 
-          // 버튼 숨기기 (공간 유지)
           elements.nextInputBtn.classList.add("invisible", "opacity-0");
           elements.nextInputBtn.classList.remove("visible", "opacity-100");
-
           elements.tagButtons.forEach((btn) => (btn.disabled = false));
         } else {
-          // 모든 토큰 처리 완료
           elements.currentToken.textContent = "✅ 문장 태깅 완료";
           elements.currentToken
             .closest(".current-token-wrapper")
             .querySelector("p").textContent =
             "다음 문장으로 넘어가거나 수정을 확인하세요.";
 
-          // 버튼 보이기 (공간 유지)
           elements.nextInputBtn.classList.remove("invisible", "opacity-0");
           elements.nextInputBtn.classList.add("visible", "opacity-100");
-
           elements.tagButtons.forEach((btn) => (btn.disabled = true));
         }
       };
@@ -483,12 +647,10 @@
           const tokenElement = document.createElement("div");
           tokenElement.className = `token-tag ${colorClass}`;
 
-          // 레이아웃 이동(CLS)을 방지하기 위해 태그 텍스트 부분에 고정 너비를 할당합니다.
-          // 'B-JOB' 등 가장 긴 태그 텍스트의 너비를 수용하도록 min-w-[45px]를 설정합니다.
           tokenElement.innerHTML = `
                     <span class="font-semibold">${token}</span>
                     <span class="ml-2 opacity-75 text-xs">
-                        (<span class="inline-block min-w-[45px] text-center">${tagText}</span>)
+                        (<span class="inline-block min-w-[32px] text-center">${tagText}</span>)
                     </span>
                 `;
 
@@ -515,21 +677,33 @@
       // 전체 UI 렌더링 (상태 변경 시 호출)
       const renderUI = () => {
         const totalInputs = globalState.inputs.length;
-        const currentIdx = globalState.currentInputIndex;
-        const isFinished = currentIdx >= totalInputs && totalInputs > 0;
-        const hasResults = globalState.allResults.length > 0; // 처리된 결과가 있는지 확인
+        const completedInputs = globalState.allResults.length;
+        const isFinished = completedInputs >= totalInputs && totalInputs > 0;
+        const hasResults = globalState.allResults.length > 0;
 
         // 1. 설정 및 진행 상황 업데이트
         elements.inputSentences.value = globalState.inputs.join("\n");
-        document.getElementById("total-inputs").textContent = totalInputs;
-        document.getElementById("current-input-index").textContent = isFinished
-          ? totalInputs
-          : currentIdx + 1;
-        elements.finalCount.textContent = globalState.allResults.length; // 처리 완료된 문장 수 업데이트
+        elements.finalCount.textContent = globalState.allResults.length;
+
+        const modelDisplay = loadedModelId || pendingModelId;
+        const progressCountText = `${completedInputs} / ${totalInputs} 문장`; // 문장 카운트 포맷
+
+        // 1-1. 진행 상태 라인 업데이트
+        let statusText = "";
+        if (isTokenizerReady) {
+          statusText = `<span class="font-bold text-green-500">토크나이저 로딩 완료!</span> (${modelDisplay})`;
+        } else if (loadedModelId) {
+          statusText = `토크나이저 로딩 중... (${modelDisplay})`;
+        } else {
+          statusText = `토크나이저 로딩 전... (${modelDisplay})`;
+        }
+        elements.progressStatusLine.innerHTML = statusText;
+
+        // 1-2. 문장 카운트 라인 업데이트 (요청하신 "현재 진행: " 포맷으로 변경)
+        elements.progressCountLine.textContent = `현재 진행: ${progressCountText}`;
 
         // 2. 섹션 표시/숨김 관리
 
-        // A. 토큰 할당 및 실시간 상태 섹션 (작업 중일 때만 표시)
         if (isFinished || totalInputs === 0) {
           elements.annotationSection.classList.add("hidden");
           elements.statusSection.classList.add("hidden");
@@ -537,18 +711,16 @@
             ? "작업 완료."
             : "{}";
         } else {
-          // 작업 진행 중
           elements.annotationSection.classList.remove("hidden");
           elements.statusSection.classList.remove("hidden");
 
           // 3. 현재 문장 정보 업데이트
           elements.currentSentenceDisplay.textContent =
-            globalState.inputs[currentIdx];
+            globalState.inputs[globalState.currentInputIndex];
 
           // 4. 태깅 UI 업데이트
           updateAnnotationUI();
           renderTokenList();
-          // 실시간 JSON 출력
           elements.currentJsonOutput.textContent = JSON.stringify(
             generateCurrentJson(),
             null,
@@ -556,10 +728,8 @@
           );
         }
 
-        // B. 최종 결과물 섹션 (처리된 결과가 하나라도 있거나 작업이 완료되었을 때 표시)
         if (hasResults) {
           elements.finalResultsSection.classList.remove("hidden");
-          // 최종 JSON 출력 (formatFinalJson 함수를 사용하여 한 줄 포맷 유지)
           elements.finalJsonOutput.textContent = formatFinalJson(true);
         } else {
           elements.finalResultsSection.classList.add("hidden");
@@ -568,12 +738,30 @@
 
       // --- 이벤트 핸들러 ---
 
-      // 작업 시작 버튼 핸들러
-      elements.startBtn.onclick = () => {
+      // 토크나이저 설정 모달 열기 버튼 핸들러
+      elements.openTokenizerModalBtn.onclick = openTokenizerConfigModal;
+
+      // 작업 시작 버튼 핸들러 (async로 변경)
+      elements.startBtn.onclick = async () => {
         const rawInputs = elements.inputSentences.value
           .split("\n")
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
+        const newModelId = pendingModelId; // 설정된 ID 사용
+
+        if (!newModelId) {
+          showModal("경고", "토크나이저 ID를 설정해주세요.");
+          return;
+        }
+
+        // 토크나이저 ID가 변경되었거나 아직 로드되지 않은 경우 재로딩
+        if (newModelId !== loadedModelId || !isTokenizerReady) {
+          await initializeTokenizer(newModelId);
+        }
+
+        if (!isTokenizerReady) {
+          return;
+        }
 
         if (rawInputs.length === 0) {
           showModal("경고", "태깅할 문장을 한 줄 이상 입력해주세요.");
@@ -586,7 +774,7 @@
         globalState.allResults = [];
 
         // 첫 문장으로 이동
-        moveToNextInput(true); // 강제 초기화
+        await moveToNextInput(true);
       };
 
       // 태그 버튼 클릭 핸들러 (tagToken 함수 호출)
@@ -611,15 +799,15 @@
         };
       });
 
-      // 다음 문장 버튼 핸들러
-      elements.nextInputBtn.onclick = () => {
-        moveToNextInput(false);
+      // 다음 문장 버튼 핸들러 (async로 변경)
+      elements.nextInputBtn.onclick = async () => {
+        await moveToNextInput(false);
       };
 
       elements.copyJsonBtn.onclick = () => {
-        const jsonText = formatFinalJson(true); // 포맷팅 함수 사용
+        const jsonText = formatFinalJson(true);
         try {
-          // execCommand를 사용하여 클립보드에 복사 (iFrame 환경에서 안정적)
+          // execCommand를 사용하여 클립보드에 복사
           const textarea = document.createElement("textarea");
           textarea.value = jsonText;
           document.body.appendChild(textarea);
@@ -636,13 +824,12 @@
         }
       };
 
-      // 다음 문장으로 이동 및 토큰/태그 초기화
-      const moveToNextInput = (isStart) => {
+      // 다음 문장으로 이동 및 토큰/태그 초기화 (async로 변경)
+      const moveToNextInput = async (isStart) => {
         const totalInputs = globalState.inputs.length;
         const currentIdx = globalState.currentInputIndex;
 
         if (!isStart && currentIdx < totalInputs) {
-          // 현재 문장의 결과를 allResults에 추가
           globalState.allResults.push(generateCurrentJson());
           globalState.currentInputIndex++;
         }
@@ -651,21 +838,42 @@
 
         if (nextIndex < totalInputs) {
           const nextSentence = globalState.inputs[nextIndex];
+
           globalState.currentTokens = tokenize(nextSentence);
+
           globalState.currentTokenTags = new Array(
             globalState.currentTokens.length
           ).fill(null);
           globalState.currentTokenIndex = 0;
+
+          if (globalState.currentTokens.length === 0) {
+            showModal(
+              "경고",
+              `"${nextSentence.substring(
+                0,
+                20
+              )}..." 문장의 토큰화 결과가 비어있습니다. 다음 문장으로 넘어갑니다.`
+            );
+            // model_id 제거
+            globalState.allResults.push({
+              input: nextSentence,
+              label: ["Error: Tokenization failed or resulted in empty array."],
+            }); // 오류 문장도 결과에 추가
+            globalState.currentInputIndex++;
+
+            if (globalState.currentInputIndex < totalInputs) {
+              // 토큰화 결과가 비어있으면 다음 문장으로 재귀 호출하여 즉시 넘어감
+              await moveToNextInput(true);
+            }
+            return;
+          }
         }
 
-        // 최종 완료 확인
         if (globalState.currentInputIndex >= totalInputs) {
-          // 최종 완료 상태로 전환
           globalState.currentTokens = [];
           globalState.currentTokenTags = [];
         }
 
-        // UI 업데이트
         renderUI();
       };
 
@@ -679,55 +887,59 @@
 
         // 1. 모달 닫기 (Enter 키)
         if (!elements.modal.classList.contains("hidden") && e.key === "Enter") {
-          e.preventDefault();
-          elements.modalCloseBtn.click();
-          return;
+          // 토크나이저 설정 모달의 입력창이 포커스된 상태에서 Enter를 누르면 '적용' 버튼 클릭
+          if (
+            document.getElementById("modal-tokenizer-input") ===
+            document.activeElement
+          ) {
+            e.preventDefault();
+            elements.modalActionBtn.click();
+            return;
+          }
+          // 일반 알림 모달일 경우 '확인' 버튼 클릭
+          else {
+            e.preventDefault();
+            elements.modalCloseBtn.click();
+            return;
+          }
         }
 
         // 2. 문장 완료 및 다음 문장으로 이동 (Enter 키)
         if (
           key === "Enter" &&
-          elements.nextInputBtn.classList.contains("visible") && // 'visible'로 체크
+          elements.nextInputBtn.classList.contains("visible") &&
           !isInputFocused
         ) {
-          e.preventDefault(); // 기본 Enter 동작(줄바꿈) 방지
+          e.preventDefault();
           elements.nextInputBtn.click();
           return;
         }
 
         // 3. 이전 토큰으로 되돌리기 (Backspace 키)
         if (key === "Backspace") {
-          // 작업 섹션이 표시되어 있고 입력창에 포커스가 없을 때만 작동
           if (
             !elements.annotationSection.classList.contains("hidden") &&
             !isInputFocused
           ) {
-            e.preventDefault(); // 브라우저 뒤로 가기 방지
+            e.preventDefault();
 
             let newIndex = globalState.currentTokenIndex;
 
-            // A. 문장 완료 상태에서 Backspace 누른 경우: 마지막 토큰으로 돌아감
             if (newIndex === globalState.currentTokens.length && newIndex > 0) {
               newIndex--;
-            }
-            // B. 일반 진행 상태에서 Backspace 누른 경우: 이전 토큰으로 돌아감
-            else if (newIndex > 0) {
+            } else if (newIndex > 0) {
               newIndex--;
             }
 
-            // 새 인덱스로 이동
             if (newIndex !== globalState.currentTokenIndex) {
               globalState.currentTokenIndex = newIndex;
 
-              // 돌아간 토큰의 태그를 초기화하여 다시 태깅할 수 있도록 함
               if (globalState.currentTokenTags[newIndex] !== undefined) {
                 globalState.currentTokenTags[newIndex] = null;
               }
 
-              // 수정 모드 해제
               globalState.isEditingTokenIndex = -1;
 
-              // UI 업데이트
               renderUI();
             }
             return;
@@ -776,8 +988,10 @@
       });
       // --- 키보드 이벤트 핸들러 끝 ---
 
-      // 애플리케이션 시작 (Firebase 초기화 없이 바로 UI 렌더링)
-      renderUI();
+      // 애플리케이션 시작 시 토크나이저 로딩 시작 (pendingModelId의 기본값을 사용)
+      window.onload = () => {
+        initializeTokenizer(pendingModelId);
+      };
     </script>
   </body>
 </html>
