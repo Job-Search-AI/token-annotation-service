@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>토큰 할당 서비스 (NER)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Inter 폰트 설정 */
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap");
+      body {
+        font-family: "Inter", sans-serif;
+        background-color: #f7f9fb;
+      }
+      /* 태깅된 토큰 색상 매핑 */
+      .bg-B-JOB {
+        background-color: #6366f1;
+      } /* Indigo */
+      .bg-I-JOB {
+        background-color: #818cf8;
+      }
+      .bg-B-CAR {
+        background-color: #22c55e;
+      } /* Green */
+      .bg-I-CAR {
+        background-color: #4ade80;
+      }
+      .bg-B-EDU {
+        background-color: #f97316;
+      } /* Orange */
+      .bg-I-EDU {
+        background-color: #fb923c;
+      }
+      .bg-B-LOC {
+        background-color: #06b6d4;
+      } /* Cyan */
+      .bg-I-LOC {
+        background-color: #22d3ee;
+      }
+      .bg-O {
+        background-color: #94a3b8;
+      } /* Slate */
+
+      .token-tag {
+        color: white;
+        padding: 4px 8px;
+        margin: 2px;
+        border-radius: 6px;
+        transition: transform 0.1s, box-shadow 0.1s;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        font-weight: 500;
+      }
+
+      .token-tag:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+
+      .current-token-wrapper {
+        min-height: 150px; /* 레이아웃 안정성 확보 */
+      }
+    </style>
+  </head>
+  <body class="p-4 md:p-8">
+    <!-- 메인 컨테이너 -->
+    <div id="app" class="max-w-6xl mx-auto">
+      <header class="mb-8 text-center">
+        <h1 class="text-3xl font-bold text-gray-800">
+          토큰 할당 서비스 (NER 태깅)
+        </h1>
+        <p class="text-gray-500">
+          각 토큰에 '직무', '경력', '학력', '지역' 또는 'O(기타)' 태그를
+          할당하세요.
+        </p>
+      </header>
+
+      <!-- 1. 입력 설정 및 진행 상황 영역 -->
+      <section
+        id="setup-section"
+        class="bg-white p-6 rounded-xl shadow-lg mb-8"
+      >
+        <h2 class="text-xl font-semibold mb-4 text-gray-700">
+          1. 입력 문장 설정 및 상태
+        </h2>
+        <div class="flex flex-col md:flex-row gap-4 mb-4">
+          <textarea
+            id="input-sentences"
+            class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 transition"
+            rows="3"
+            placeholder="한 줄에 하나의 문장을 입력하세요. (예: 신입 고졸 프론트엔드 개발자 서울 공고 알려줘.)"
+          ></textarea>
+          <button
+            id="start-btn"
+            class="bg-indigo-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-indigo-700 transition duration-150 shadow-md whitespace-nowrap"
+          >
+            작업 시작 / 재시작
+          </button>
+        </div>
+        <p id="progress-info" class="text-sm text-gray-600 mt-2">
+          현재 진행: <span id="current-input-index">0</span> /
+          <span id="total-inputs">0</span> 문장
+        </p>
+      </section>
+
+      <!-- 2. 토큰 할당 영역 (작업 중일 때만 표시) -->
+      <section
+        id="annotation-section"
+        class="bg-white p-8 rounded-xl shadow-lg mb-8 hidden"
+      >
+        <h2 class="text-xl font-semibold mb-6 text-gray-700">2. 토큰 태깅</h2>
+
+        <!-- 현재 토큰 표시 -->
+        <div
+          class="current-token-wrapper flex flex-col items-center justify-center mb-8"
+        >
+          <span
+            class="text-6xl font-extrabold text-indigo-700"
+            id="current-token"
+          ></span>
+          <p class="text-sm text-gray-400 mt-2">({}번째 토큰)</p>
+        </div>
+
+        <!-- 태그 할당 버튼 (숫자 단축키 추가) -->
+        <div
+          id="tag-buttons"
+          class="grid grid-cols-2 md:grid-cols-5 gap-3 max-w-2xl mx-auto"
+        >
+          <button
+            data-tag="JOB"
+            class="tag-btn bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded-lg shadow-md transition duration-150"
+          >
+            1. 직무 (JOB)
+          </button>
+          <button
+            data-tag="CAR"
+            class="tag-btn bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg shadow-md transition duration-150"
+          >
+            2. 경력 (CAR)
+          </button>
+          <button
+            data-tag="EDU"
+            class="tag-btn bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg shadow-md transition duration-150"
+          >
+            3. 학력 (EDU)
+          </button>
+          <button
+            data-tag="LOC"
+            class="tag-btn bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 rounded-lg shadow-md transition duration-150"
+          >
+            4. 지역 (LOC)
+          </button>
+          <!-- 'O (기타)' 버튼을 'X (O 태깅)'으로 변경 -->
+          <button
+            data-tag="O"
+            class="tag-btn bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-lg shadow-md transition duration-150"
+          >
+            5. X (O 태깅)
+          </button>
+        </div>
+
+        <!-- 문장 완료/다음 문장 버튼 -->
+        <div class="text-center mt-6">
+          <button
+            id="next-input-btn"
+            class="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 transition duration-150 shadow-lg hidden"
+          >
+            다음 문장으로 →
+          </button>
+        </div>
+      </section>
+
+      <!-- 3. 실시간 진행 상황 및 수정 영역 -->
+      <section
+        id="status-section"
+        class="bg-white p-6 rounded-xl shadow-lg mb-8 hidden"
+      >
+        <h2 class="text-xl font-semibold mb-4 text-gray-700">
+          3. 실시간 태깅 상태 (클릭하여 수정)
+        </h2>
+        <p class="text-sm text-gray-500 mb-3">
+          <span class="font-bold text-gray-700">현재 문장:</span>
+          <span id="current-sentence-display"></span>
+        </p>
+
+        <!-- 태그 목록 표시 -->
+        <div
+          id="token-list"
+          class="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-lg min-h-12 bg-gray-50"
+        >
+          <p class="text-gray-400 text-sm italic">
+            토큰을 할당하면 여기에 표시됩니다.
+          </p>
+        </div>
+
+        <!-- JSON 결과 실시간 표시 -->
+        <h3 class="text-lg font-medium mt-6 mb-2 text-gray-700">
+          현재 JSON 결과:
+        </h3>
+        <pre
+          id="current-json-output"
+          class="bg-gray-800 text-green-300 p-4 rounded-lg overflow-x-auto text-sm"
+        >
+{}</pre
+        >
+      </section>
+
+      <!-- 4. 최종 결과 영역 -->
+      <section
+        id="final-results-section"
+        class="bg-white p-6 rounded-xl shadow-lg mb-8 hidden"
+      >
+        <h2 class="text-xl font-semibold mb-4 text-gray-700">4. 최종 결과물</h2>
+        <p class="text-gray-600 mb-4">
+          모든 입력 문장에 대한 태깅이 완료되었습니다. 아래 JSON을 복사할 수
+          있습니다.
+        </p>
+        <pre
+          id="final-json-output"
+          class="bg-gray-800 text-yellow-300 p-4 rounded-lg overflow-x-auto text-sm max-h-96"
+        >
+[]</pre
+        >
+        <button
+          id="copy-json-btn"
+          class="mt-4 bg-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition duration-150 shadow-md"
+        >
+          JSON 복사
+        </button>
+      </section>
+
+      <!-- 커스텀 모달 (경고/확인용) -->
+      <div
+        id="custom-modal"
+        class="fixed inset-0 bg-black bg-opacity-50 z-50 items-center justify-center hidden"
+      >
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4">
+          <h3 id="modal-title" class="text-xl font-bold mb-3 text-gray-800">
+            알림
+          </h3>
+          <p id="modal-message" class="text-gray-700 mb-4">내용</p>
+          <div class="flex justify-end space-x-3">
+            <button
+              id="modal-close-btn"
+              class="bg-gray-300 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-400 transition"
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="text/javascript">
+      // 앱 상태 변수 (파이어베이스 대신 로컬 메모리 사용)
+      let globalState = {
+        inputs: [], // 모든 입력 문장
+        currentInputIndex: 0, // 현재 처리 중인 문장 인덱스
+        currentTokenIndex: 0, // 현재 처리 중인 토큰 인덱스
+        currentTokens: [], // 현재 문장의 토큰 배열
+        currentTokenTags: [], // 현재 문장의 태그 배열
+        allResults: [], // 모든 완료된 결과
+        isEditingTokenIndex: -1, // 수정 중인 토큰의 인덱스 (-1이면 수정 아님)
+      };
+
+      // UI 요소 캐싱
+      const elements = {
+        inputSentences: document.getElementById("input-sentences"),
+        startBtn: document.getElementById("start-btn"),
+        progressInfo: document.getElementById("progress-info"),
+        annotationSection: document.getElementById("annotation-section"),
+        statusSection: document.getElementById("status-section"),
+        finalResultsSection: document.getElementById("final-results-section"),
+        currentToken: document.getElementById("current-token"),
+        tokenList: document.getElementById("token-list"),
+        currentJsonOutput: document.getElementById("current-json-output"),
+        finalJsonOutput: document.getElementById("final-json-output"),
+        nextInputBtn: document.getElementById("next-input-btn"),
+        tagButtons: document.querySelectorAll(".tag-btn"),
+        modal: document.getElementById("custom-modal"),
+        modalTitle: document.getElementById("modal-title"),
+        modalMessage: document.getElementById("modal-message"),
+        modalCloseBtn: document.getElementById("modal-close-btn"),
+        currentSentenceDisplay: document.getElementById(
+          "current-sentence-display"
+        ),
+        copyJsonBtn: document.getElementById("copy-json-btn"),
+      };
+
+      // --- 유틸리티 함수 ---
+
+      // 커스텀 모달 표시
+      const showModal = (title, message) => {
+        elements.modalTitle.textContent = title;
+        elements.modalMessage.textContent = message;
+        elements.modal.classList.remove("hidden");
+        elements.modal.classList.add("flex");
+      };
+
+      elements.modalCloseBtn.onclick = () => {
+        elements.modal.classList.add("hidden");
+        elements.modal.classList.remove("flex");
+      };
+
+      // 태그에 따른 배경 색상 클래스 반환
+      const getTagColorClass = (tag) => {
+        if (!tag) return "bg-gray-300 text-gray-700";
+        const baseTag = tag.replace(/^[BI]-/, "");
+        return `bg-${tag} text-white`;
+      };
+
+      // 토큰을 공백 기준으로 분리
+      const tokenize = (sentence) => {
+        return sentence
+          .trim()
+          .split(/\s+/)
+          .filter((t) => t.length > 0);
+      };
+
+      // --- UI 및 상태 관리 로직 ---
+
+      /**
+       * 최종 JSON 결과를 원하는 형식(label 배열을 한 줄로)으로 포맷합니다.
+       * @param {boolean} prettyPrint - 전체 JSON에 들여쓰기를 적용할지 여부
+       * @returns {string} 포맷된 JSON 문자열
+       */
+      const formatFinalJson = (prettyPrint) => {
+        // 깊은 복사본을 만들어 수정합니다.
+        const displayResults = JSON.parse(
+          JSON.stringify(globalState.allResults)
+        );
+
+        // 'label' 배열을 임시로 한 줄 문자열로 만듭니다.
+        displayResults.forEach((result) => {
+          if (result.label && Array.isArray(result.label)) {
+            // label 배열만 공백 없이 JSON 문자열로 변환 (한 줄로 만듦)
+            result.label = JSON.stringify(result.label);
+          }
+        });
+
+        // 전체 JSON을 들여쓰기하여 문자열로 변환합니다.
+        let jsonString = JSON.stringify(
+          displayResults,
+          null,
+          prettyPrint ? 2 : 0
+        );
+
+        // 문자열로 변환된 label 배열을 다시 JSON 배열 형태로 복원합니다.
+        // 정규식 패턴: ("label": )"(\[.*?\])"
+        jsonString = jsonString.replace(
+          /("label": )"(\[.*?\])"/gs,
+          (match, p1, p2) => {
+            // 이중 인용부호와 이스케이프된 인용부호를 제거하여 순수 배열 문자열로 만듭니다.
+            const unescapedLabels = p2.replace(/\\"/g, '"');
+
+            // "label": ["B-JOB", "I-JOB", "O"] 형태가 되도록 반환합니다.
+            return `${p1}${unescapedLabels}`;
+          }
+        );
+
+        return jsonString;
+      };
+
+      /**
+       * 토큰에 태그를 할당하고 B-I-O 규칙을 적용합니다.
+       * @param {string} entityType - 할당할 엔티티 유형 ('JOB', 'CAR', 'EDU', 'LOC', 'O')
+       */
+      const tagToken = (entityType) => {
+        // 현재 토큰 인덱스 또는 수정 중인 토큰 인덱스를 사용
+        const index =
+          globalState.isEditingTokenIndex !== -1
+            ? globalState.isEditingTokenIndex
+            : globalState.currentTokenIndex;
+
+        if (index >= globalState.currentTokens.length) {
+          // 토큰을 모두 처리했으므로 다음 문장 버튼을 보여줌
+          elements.nextInputBtn.classList.remove("hidden");
+          return;
+        }
+
+        let newTag = "";
+
+        if (entityType === "O") {
+          newTag = "O"; // 'O' 태그 할당
+        } else {
+          // B/I 결정 로직
+          let prevTag =
+            index > 0 ? globalState.currentTokenTags[index - 1] : null;
+          const prevEntityType = prevTag ? prevTag.replace(/^[BI]-/, "") : null;
+
+          // 이전 태그가 현재 엔티티 타입과 같으면 I-, 아니면 B-를 붙입니다.
+          if (prevEntityType === entityType) {
+            newTag = `I-${entityType}`;
+          } else {
+            newTag = `B-${entityType}`;
+          }
+        }
+
+        // 태그 할당
+        globalState.currentTokenTags[index] = newTag;
+
+        // 수정 모드였으면 수정 모드 종료
+        if (globalState.isEditingTokenIndex !== -1) {
+          globalState.isEditingTokenIndex = -1;
+        } else {
+          // 일반 진행 모드: 다음 토큰으로 이동
+          globalState.currentTokenIndex++;
+        }
+
+        // 상태 변경 후 UI 즉시 업데이트
+        renderUI();
+      };
+
+      // 현재 문장의 JSON 결과 생성
+      const generateCurrentJson = () => {
+        const input = globalState.inputs[globalState.currentInputIndex] || "";
+        const labels = globalState.currentTokenTags;
+
+        if (labels.length === 0) return {};
+
+        return {
+          input: input,
+          label: labels,
+        };
+      };
+
+      // 현재 토큰 표시 및 버튼 활성화/비활성화
+      const updateAnnotationUI = () => {
+        const totalTokens = globalState.currentTokens.length;
+        const index =
+          globalState.isEditingTokenIndex !== -1
+            ? globalState.isEditingTokenIndex
+            : globalState.currentTokenIndex;
+
+        // 현재 토큰 표시
+        if (index < totalTokens) {
+          elements.currentToken.textContent = globalState.currentTokens[index];
+          elements.currentToken
+            .closest(".current-token-wrapper")
+            .querySelector("p").textContent = `(${index + 1}번째 토큰)`;
+          elements.nextInputBtn.classList.add("hidden");
+          elements.tagButtons.forEach((btn) => (btn.disabled = false));
+        } else {
+          // 모든 토큰 처리 완료
+          elements.currentToken.textContent = "✅ 문장 태깅 완료";
+          elements.currentToken
+            .closest(".current-token-wrapper")
+            .querySelector("p").textContent =
+            "다음 문장으로 넘어가거나 수정을 확인하세요.";
+          elements.nextInputBtn.classList.remove("hidden");
+          elements.tagButtons.forEach((btn) => (btn.disabled = true));
+        }
+      };
+
+      // 토큰 목록 (수정 가능 영역) 렌더링
+      const renderTokenList = () => {
+        elements.tokenList.innerHTML = "";
+        if (globalState.currentTokens.length === 0) {
+          elements.tokenList.innerHTML =
+            '<p class="text-gray-400 text-sm italic">토큰을 할당하면 여기에 표시됩니다.</p>';
+          return;
+        }
+
+        globalState.currentTokens.forEach((token, idx) => {
+          const tag = globalState.currentTokenTags[idx];
+          const tagText = tag || "?";
+          const colorClass = getTagColorClass(tag);
+
+          const tokenElement = document.createElement("div");
+          tokenElement.className = `token-tag ${colorClass}`;
+          tokenElement.innerHTML = `<span class="font-semibold">${token}</span><span class="ml-2 opacity-75 text-xs">(${tagText})</span>`;
+          tokenElement.dataset.index = idx;
+
+          // 클릭 시 수정 모드로 전환
+          tokenElement.onclick = () => enterEditMode(idx);
+
+          elements.tokenList.appendChild(tokenElement);
+        });
+      };
+
+      // 수정 모드 진입
+      const enterEditMode = (index) => {
+        globalState.isEditingTokenIndex = index;
+        console.log(
+          `[${globalState.currentTokens[index]}] 토큰 수정 모드 진입. 아래 태깅 버튼을 다시 눌러 수정하세요.`
+        );
+
+        updateAnnotationUI();
+        renderUI();
+      };
+
+      // 전체 UI 렌더링 (상태 변경 시 호출)
+      const renderUI = () => {
+        const totalInputs = globalState.inputs.length;
+        const currentIdx = globalState.currentInputIndex;
+        const isFinished = currentIdx >= totalInputs && totalInputs > 0;
+
+        // 1. 설정 및 진행 상황 업데이트
+        elements.inputSentences.value = globalState.inputs.join("\n");
+        document.getElementById("total-inputs").textContent = totalInputs;
+        document.getElementById("current-input-index").textContent = isFinished
+          ? totalInputs
+          : currentIdx + 1;
+
+        // 2. 섹션 표시/숨김 관리
+        if (totalInputs === 0 || isFinished) {
+          // 작업 완료 또는 시작 전
+          elements.annotationSection.classList.add("hidden");
+          elements.statusSection.classList.add("hidden");
+          if (isFinished) {
+            elements.finalResultsSection.classList.remove("hidden");
+            // 최종 JSON 출력 (formatFinalJson 함수를 사용하여 한 줄 포맷 유지)
+            elements.finalJsonOutput.textContent = formatFinalJson(true);
+          } else {
+            elements.finalResultsSection.classList.add("hidden");
+          }
+        } else {
+          // 작업 진행 중
+          elements.annotationSection.classList.remove("hidden");
+          elements.statusSection.classList.remove("hidden");
+          elements.finalResultsSection.classList.add("hidden");
+
+          // 3. 현재 문장 정보 업데이트
+          elements.currentSentenceDisplay.textContent =
+            globalState.inputs[currentIdx];
+
+          // 4. 태깅 UI 업데이트
+          updateAnnotationUI();
+          renderTokenList();
+          // 실시간 JSON 출력
+          elements.currentJsonOutput.textContent = JSON.stringify(
+            generateCurrentJson(),
+            null,
+            2
+          );
+        }
+      };
+
+      // --- 이벤트 핸들러 ---
+
+      // 작업 시작 버튼 핸들러
+      elements.startBtn.onclick = () => {
+        const rawInputs = elements.inputSentences.value
+          .split("\n")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+
+        if (rawInputs.length === 0) {
+          showModal("경고", "태깅할 문장을 한 줄 이상 입력해주세요.");
+          return;
+        }
+
+        // 새 작업 시작 시 상태 초기화 및 설정
+        globalState.inputs = rawInputs;
+        globalState.currentInputIndex = 0;
+        globalState.allResults = [];
+
+        // 첫 문장으로 이동
+        moveToNextInput(true); // 강제 초기화
+      };
+
+      // 태그 버튼 클릭 핸들러 (tagToken 함수 호출)
+      elements.tagButtons.forEach((button) => {
+        button.onclick = (e) => {
+          const entityType = e.target.dataset.tag;
+          if (!entityType) return;
+
+          if (
+            globalState.currentTokens.length === 0 ||
+            (globalState.currentTokenIndex >=
+              globalState.currentTokens.length &&
+              globalState.isEditingTokenIndex === -1)
+          ) {
+            console.warn(
+              "현재 처리할 토큰이 없습니다. 다음 문장으로 넘어가거나 작업을 시작해주세요."
+            );
+            return;
+          }
+
+          tagToken(entityType);
+        };
+      });
+
+      // 다음 문장 버튼 핸들러
+      elements.nextInputBtn.onclick = () => {
+        moveToNextInput(false);
+      };
+
+      elements.copyJsonBtn.onclick = () => {
+        const jsonText = formatFinalJson(true); // 포맷팅 함수 사용
+        try {
+          // execCommand를 사용하여 클립보드에 복사 (iFrame 환경에서 안정적)
+          const textarea = document.createElement("textarea");
+          textarea.value = jsonText;
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+          showModal("복사 완료", "최종 JSON 결과가 클립보드에 복사되었습니다.");
+        } catch (err) {
+          console.error("복사 오류:", err);
+          showModal(
+            "복사 실패",
+            "클립보드 복사에 실패했습니다. 콘솔을 확인해주세요."
+          );
+        }
+      };
+
+      // 다음 문장으로 이동 및 토큰/태그 초기화
+      const moveToNextInput = (isStart) => {
+        const totalInputs = globalState.inputs.length;
+        const currentIdx = globalState.currentInputIndex;
+
+        if (!isStart && currentIdx < totalInputs) {
+          // 현재 문장의 결과를 allResults에 추가
+          globalState.allResults.push(generateCurrentJson());
+          globalState.currentInputIndex++;
+        }
+
+        const nextIndex = globalState.currentInputIndex;
+
+        if (nextIndex < totalInputs) {
+          const nextSentence = globalState.inputs[nextIndex];
+          globalState.currentTokens = tokenize(nextSentence);
+          globalState.currentTokenTags = new Array(
+            globalState.currentTokens.length
+          ).fill(null);
+          globalState.currentTokenIndex = 0;
+        }
+
+        // 최종 완료 확인
+        if (globalState.currentInputIndex >= totalInputs) {
+          // 최종 완료 상태로 전환
+          globalState.currentTokens = [];
+          globalState.currentTokenTags = [];
+        }
+
+        // UI 업데이트
+        renderUI();
+      };
+
+      // --- 키보드 이벤트 핸들러 추가 ---
+      document.addEventListener("keydown", (e) => {
+        const key = e.key;
+        let buttonIndex = -1;
+
+        // 1. 모달 닫기 (Enter 키)
+        if (!elements.modal.classList.contains("hidden") && e.key === "Enter") {
+          e.preventDefault();
+          elements.modalCloseBtn.click();
+          return;
+        }
+
+        // '1' to '5' keys (상단 숫자 키)
+        if (key >= "1" && key <= "5") {
+          buttonIndex = parseInt(key) - 1;
+        }
+
+        if (buttonIndex !== -1 && buttonIndex < elements.tagButtons.length) {
+          const isInputFocused =
+            document.activeElement.tagName === "TEXTAREA" ||
+            document.activeElement.tagName === "INPUT";
+
+          if (
+            elements.annotationSection.classList.contains("hidden") ||
+            isInputFocused
+          ) {
+            return;
+          }
+
+          const targetButton = elements.tagButtons[buttonIndex];
+
+          if (targetButton && !targetButton.disabled) {
+            e.preventDefault();
+
+            targetButton.classList.add(
+              "ring-4",
+              "ring-offset-2",
+              "ring-opacity-50",
+              "ring-indigo-300"
+            );
+
+            setTimeout(() => {
+              targetButton.classList.remove(
+                "ring-4",
+                "ring-offset-2",
+                "ring-opacity-50",
+                "ring-indigo-300"
+              );
+            }, 100);
+
+            const entityType = targetButton.dataset.tag;
+            tagToken(entityType);
+          }
+        }
+      });
+      // --- 키보드 이벤트 핸들러 끝 ---
+
+      // 애플리케이션 시작 (Firebase 초기화 없이 바로 UI 렌더링)
+      renderUI();
+    </script>
+  </body>
+</html>
