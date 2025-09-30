@@ -484,11 +484,11 @@
           tokenElement.className = `token-tag ${colorClass}`;
 
           // 레이아웃 이동(CLS)을 방지하기 위해 태그 텍스트 부분에 고정 너비를 할당합니다.
-          // 'B-JOB' 등 가장 긴 태그 텍스트의 너비를 수용하도록 min-w-[32px]를 설정합니다.
+          // 'B-JOB' 등 가장 긴 태그 텍스트의 너비를 수용하도록 min-w-[45px]를 설정합니다.
           tokenElement.innerHTML = `
                     <span class="font-semibold">${token}</span>
                     <span class="ml-2 opacity-75 text-xs">
-                        (<span class="inline-block min-w-[32px] text-center">${tagText}</span>)
+                        (<span class="inline-block min-w-[45px] text-center">${tagText}</span>)
                     </span>
                 `;
 
