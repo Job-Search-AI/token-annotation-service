@@ -114,11 +114,13 @@
         <div
           class="current-token-wrapper flex flex-col items-center justify-center mb-8"
         >
+          <!-- 변경: h-24, flex, items-center, justify-center를 추가하여 높이를 고정하고 텍스트를 중앙에 배치 -->
           <span
-            class="text-6xl font-extrabold text-indigo-700"
+            class="text-6xl font-extrabold text-indigo-700 h-24 flex items-center justify-center"
             id="current-token"
           ></span>
-          <p class="text-sm text-gray-400 mt-2">({}번째 토큰)</p>
+          <!-- 변경: h-5를 추가하여 설명 텍스트 영역의 높이를 고정 -->
+          <p class="text-sm text-gray-400 mt-2 h-5">({}번째 토큰)</p>
         </div>
 
         <!-- 태그 할당 버튼 (숫자 단축키 추가) -->
@@ -161,9 +163,10 @@
 
         <!-- 문장 완료/다음 문장 버튼 -->
         <div class="text-center mt-6">
+          <!-- 변경: 'hidden'을 'invisible opacity-0'로 교체하여 공간은 유지하되 시각적으로만 숨깁니다. -->
           <button
             id="next-input-btn"
-            class="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 transition duration-150 shadow-lg hidden"
+            class="bg-blue-600 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-700 transition duration-150 shadow-lg invisible opacity-0"
           >
             다음 문장으로 →
           </button>
@@ -377,7 +380,7 @@
 
         if (index >= globalState.currentTokens.length) {
           // 토큰을 모두 처리했으므로 다음 문장 버튼을 보여줌
-          elements.nextInputBtn.classList.remove("hidden");
+          // CLS 방지를 위해 클래스 토글 로직은 updateAnnotationUI에서 처리합니다.
           return;
         }
 
@@ -441,7 +444,11 @@
           elements.currentToken
             .closest(".current-token-wrapper")
             .querySelector("p").textContent = `(${index + 1}번째 토큰)`;
-          elements.nextInputBtn.classList.add("hidden");
+
+          // 버튼 숨기기 (공간 유지)
+          elements.nextInputBtn.classList.add("invisible", "opacity-0");
+          elements.nextInputBtn.classList.remove("visible", "opacity-100");
+
           elements.tagButtons.forEach((btn) => (btn.disabled = false));
         } else {
           // 모든 토큰 처리 완료
@@ -450,7 +457,11 @@
             .closest(".current-token-wrapper")
             .querySelector("p").textContent =
             "다음 문장으로 넘어가거나 수정을 확인하세요.";
-          elements.nextInputBtn.classList.remove("hidden");
+
+          // 버튼 보이기 (공간 유지)
+          elements.nextInputBtn.classList.remove("invisible", "opacity-0");
+          elements.nextInputBtn.classList.add("visible", "opacity-100");
+
           elements.tagButtons.forEach((btn) => (btn.disabled = true));
         }
       };
@@ -477,7 +488,7 @@
           tokenElement.innerHTML = `
                     <span class="font-semibold">${token}</span>
                     <span class="ml-2 opacity-75 text-xs">
-                        (<span class="inline-block min-w-[40px] text-center">${tagText}</span>)
+                        (<span class="inline-block min-w-[32px] text-center">${tagText}</span>)
                     </span>
                 `;
 
@@ -676,7 +687,7 @@
         // 2. 문장 완료 및 다음 문장으로 이동 (Enter 키)
         if (
           key === "Enter" &&
-          !elements.nextInputBtn.classList.contains("hidden") &&
+          elements.nextInputBtn.classList.contains("visible") && // 'visible'로 체크
           !isInputFocused
         ) {
           e.preventDefault(); // 기본 Enter 동작(줄바꿈) 방지
